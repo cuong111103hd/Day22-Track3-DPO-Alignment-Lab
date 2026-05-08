@@ -6,11 +6,11 @@
 
 # %% [markdown]
 # # NB6 — LLM Benchmark: SFT-only vs SFT+DPO
-#
+# 
 # **Stack:** `lm-eval-harness` (IFEval, GSM8K, MMLU) + hand-rolled AlpacaEval-lite (judge-based).
 # Maps to deck §8.1–§8.5 (Đánh giá Alignment): static suites · judge-based suites · reward-model
 # evaluators · VN landscape.
-#
+# 
 # > **Mục tiêu:** chạy 4 benchmarks trên *cùng 1 base model* dưới 2 condition (SFT-only và
 # > SFT+DPO), thấy bằng số có gì tăng có gì giảm. Plot bar chart so sánh. Đây là cách *bạn* tự đo
 # > tương đương Tulu 3 stats §9.2b — không chỉ trích dẫn paper người khác.
@@ -96,10 +96,9 @@ def run_lm_eval(adapter_path, tasks, limit, num_fewshot, label):
         return {"error": "no_results"}
     return json.loads(out_files[-1].read_text())["results"]
 
-
 # %% [markdown]
 # ## 2. IFEval — Instruction-Following (programmatic)
-#
+# 
 # **What it tests:** can the model follow precise format instructions like "respond in 3 bullets."
 # 540 prompts, scored programmatically. No judge needed. **Why DPO matters:** chat alignment
 # is exactly the skill IFEval measures.
@@ -117,7 +116,7 @@ torch.cuda.empty_cache()
 
 # %% [markdown]
 # ## 3. GSM8K — Grade-School Math (alignment tax probe)
-#
+# 
 # **What it tests:** 1.3K word problems, exact-match on the `####` final answer.
 # **Why DPO matters:** chat-aligned models often *lose* a few points on GSM8K (alignment tax).
 
@@ -134,7 +133,7 @@ torch.cuda.empty_cache()
 
 # %% [markdown]
 # ## 4. MMLU — Broad knowledge (sampled)
-#
+# 
 # **What it tests:** 14K MCQ across 57 subjects. T4 limit: 500. BigGPU: 5K.
 # **Why DPO matters:** if MMLU drops a lot, you've over-aligned (capacity loss).
 
@@ -151,10 +150,10 @@ torch.cuda.empty_cache()
 
 # %% [markdown]
 # ## 5. AlpacaEval-lite — Win-rate vs reference (judge-based)
-#
+# 
 # Mini AlpacaEval 2 LC. 100 prompts, generate from both adapters, judge with gpt-4o-mini or
 # claude-haiku. Pure preference-style — closest in spirit to what DPO trained on.
-#
+# 
 # Falls back to "skipped" if no API key. Set `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` to enable.
 
 # %%
@@ -211,7 +210,6 @@ def generate_with_adapter(adapter_path, prompts, max_new_tokens=256):
     torch.cuda.empty_cache()
     return outputs
 
-
 # %%
 JUDGE_PROMPT = """You are evaluating two assistant responses for helpfulness.
 
@@ -254,7 +252,6 @@ def judge_pair(a, b, prompt):
         except Exception:
             return {"winner": "tie", "reason": "parse error"}
     return None
-
 
 # %%
 import random
@@ -406,34 +403,35 @@ print(f"\nSaved {EVAL_OUT / 'benchmark_results.json'}")
 
 # %% [markdown]
 # ## 8. Vibe-coding callout — interpret your numbers
-#
+# 
 # Câu hỏi để brainstorm trước khi viết REFLECTION § 7:
-#
+# 
 # 1. **Benchmark nào tăng nhiều nhất?** Nếu IFEval tăng nhiều, DPO đã làm đúng việc của nó
 #    (chat-tuning). Nếu AlpacaEval-lite tăng nhiều → preference signal transfer tốt.
-#
+# 
 # 2. **Benchmark nào *giảm*?** GSM8K hoặc MATH giảm = **alignment tax** kinh điển (deck §8.1).
 #    Đó không phải bug; đó là trade-off:
 #    - Capacity được dành cho format (theo lệnh) thay vì reasoning sâu
 #    - Chat data thường ngắn hơn math derivation → model học output ngắn hơn
-#
+# 
 # 3. **MMLU thay đổi ít hay nhiều?** MMLU đo *kiến thức nền*. DPO trên preference data thường
 #    KHÔNG dạy facts mới → MMLU thường flat (±2pp). Nếu giảm > 5pp → catastrophic forgetting,
 #    giảm β hoặc giảm epochs.
-#
+# 
 # 4. **AlpacaEval-lite có khớp với NB4 judge eval không?** Cả 2 đều judge-based nhưng prompt
 #    distribution khác nhau (NB4: 8 fixed, mix helpfulness+safety; AlpacaEval-lite: 100,
 #    helpfulness-focused). Kết quả khác = signal về *prompt distribution sensitivity*.
-#
+# 
 # **Vibe-coding tip (xem `VIBE-CODING.md` Phần 2 § Common workflows):** bạn có thể tự động hoá
 # với Claude Code:
-#
+# 
 # ```
 # claude --permission-mode plan -p "Read data/eval/benchmark_results.json
 # and submission/REFLECTION.md, propose a draft for § 7 (≥ 150 words) interpreting
 # the deltas. Reference deck §8.1 for alignment tax framing."
 # ```
-#
+# 
 # ---
-#
+# 
 # **Bạn vừa hoàn thành full Lab 22 pipeline.** Run `make verify` để check submission readiness.
+

@@ -6,11 +6,11 @@
 
 # %% [markdown]
 # # NB5 — Merge + Deploy + GGUF
-#
+# 
 # **Stack:** Unsloth `merge_and_unload` + `save_pretrained_gguf(quantization='Q4_K_M')`
 # + llama-cpp-python smoke test.
 # Maps to deck §7.1 lab brief: "merge adapter, quantize GGUF, serve với vLLM".
-#
+# 
 # > **Mục tiêu:** export the SFT+DPO adapter as a deployable GGUF Q4_K_M file
 # > (~1.5 GB on 3B / ~4 GB on 7B), then smoke-test it through llama-cpp-python.
 # > Final cell shows the optional vLLM serving command (BigGPU only).
@@ -77,31 +77,76 @@ print(f"Loaded SFT-mini adapter from {SFT_PATH}")
 
 # %% [markdown]
 # ## 2. Save merged FP16 weights
-#
+# 
 # `save_pretrained_merged(method="merged_16bit")` produces a HuggingFace-format
 # directory you can either upload to HF Hub directly OR feed into the GGUF
 # converter in step 3.
 
 # %%
-# This re-loads the model with both SFT and DPO adapters merged into base weights.
-# Output is FP16 (or BF16 on Ampere+) HF-format weights ready for inference.
-model.save_pretrained_merged(
-    str(MERGED_PATH),
-    tokenizer,
-    save_method="merged_16bit",
-)
-print(f"Saved merged FP16 to {MERGED_PATH}")
-
-# Free GPU memory before GGUF conversion (which spawns a subprocess that needs RAM)
+import os
+import shutil
 import gc
+import torch
+from unsloth import FastLanguageModel
+from peft import PeftModel
 
+# 1. Cleanup target directory
+if os.path.exists(MERGED_PATH):
+    shutil.rmtree(MERGED_PATH)
+os.makedirs(MERGED_PATH, exist_ok=True)
+
+# 2. Load Base Model in full precision for merging
+# IMPORTANT: load_in_4bit=False is required for merged_16bit
+model, tokenizer = FastLanguageModel.from_pretrained(
+    model_name=BASE_MODEL,
+    max_seq_length=MAX_LEN,
+    dtype=None,
+    load_in_4bit=False,
+)
+
+# 3. Load SFT and DPO Adapters
+print("Loading adapters...")
+model = PeftModel.from_pretrained(model, str(SFT_PATH), adapter_name="sft")
+model.load_adapter(str(DPO_PATH), adapter_name="dpo")
+
+# Set DPO as the active adapter for the final merge
+model.set_adapter("dpo")
+
+# 4. Perform Merge and Save
+print(f"Starting 16-bit merge and save to {MERGED_PATH}...")
+try:
+    model.save_pretrained_merged(
+        str(MERGED_PATH),
+        tokenizer,
+        save_method = "merged_16bit",
+    )
+    os.sync()
+except Exception as e:
+    print(f"An error occurred during merging: {e}")
+
+# 5. Verification
+print("Verifying disk contents...")
+if os.path.exists(MERGED_PATH):
+    files = os.listdir(MERGED_PATH)
+    weight_files = [f for f in files if f.endswith('.safetensors') or f.endswith('.bin') or 'model.safetensors' in f]
+    if not weight_files:
+        print(f"ERROR: Weights missing. Directory contents: {files}")
+    else:
+        for wf in weight_files:
+            fsize = os.path.getsize(os.path.join(MERGED_PATH, wf)) / 1024**3
+            print(f"Found weight file: {wf} ({fsize:.2f} GB)")
+        print("SUCCESS: Merged weights generated.")
+else:
+    print("ERROR: Directory creation failed.")
+
+# Cleanup
 del model
 gc.collect()
 torch.cuda.empty_cache()
 
 # %% [markdown]
 # ## 3. Quantize to GGUF Q4_K_M
-#
+# 
 # Q4_K_M is the sweet spot: ~4× compression vs FP16, minimal quality loss.
 # Unsloth wraps llama.cpp's `quantize` binary — first run downloads + compiles
 # llama.cpp (~3 min) then quantizes (~30 s).
@@ -118,14 +163,47 @@ model, tokenizer = FLM.from_pretrained(
 )
 
 # %%
-# Save GGUF in 1 quantization tier (Q4_K_M). Add more tiers below if you want the
-# +3 "GGUF release published" rigor add-on.
+# Quantize the merged model to GGUF Q4_K_M
+from unsloth import FastLanguageModel
+import os
+import time
+
+# Diagnostic: List files to see what was actually saved
+print(f"Contents of {MERGED_PATH}:")
+if os.path.exists(MERGED_PATH):
+    print(os.listdir(MERGED_PATH))
+else:
+    print("Directory does not exist!")
+
+# Improved Verification step
+print(f"Checking for merged weights at {MERGED_PATH}...")
+found = False
+for i in range(12):
+    files = os.listdir(MERGED_PATH) if os.path.exists(MERGED_PATH) else []
+    if "model.safetensors" in files or "pytorch_model.bin" in files:
+        print(f"Weights found after {i*5}s!")
+        found = True
+        break
+    print(f"[{i*5}s] Waiting for weights to sync... Current files: {files}")
+    time.sleep(5)
+
+if not found:
+    print("CRITICAL: Weights not found. Re-running a forced save in the next step may be required.")
+
+model, tokenizer = FastLanguageModel.from_pretrained(
+    model_name=str(MERGED_PATH),
+    max_seq_length=MAX_LEN,
+    dtype=None,
+    load_in_4bit=False,
+)
+
+print("Converting to GGUF (Q4_K_M)... This may take 2-3 minutes.")
 model.save_pretrained_gguf(
     str(GGUF_DIR),
     tokenizer,
     quantization_method="q4_k_m",
 )
-print(f"Saved GGUF Q4_K_M to {GGUF_DIR}")
+print(f"Successfully saved GGUF to {GGUF_DIR}")
 
 # %% [markdown]
 # ### 3a. Optional — additional quantization tiers (for the +3 rigor add-on)
@@ -189,13 +267,13 @@ print(f"\nTokens used: {response['usage']}")
 
 # %% [markdown]
 # ## 5. Optional — vLLM serving (BigGPU only)
-#
+# 
 # vLLM provides production-grade OpenAI-compatible serving. **Requires CUDA GPU
 # with ≥ 16 GB VRAM** and `vllm` installed (see `requirements-biggpu.txt`).
 # On T4 tier this cell will OOM. Skip on T4.
-#
+# 
 # Run in a SEPARATE terminal (NOT in the notebook — vLLM blocks until killed):
-#
+# 
 # ```bash
 # pip install vllm                         # once
 # vllm serve adapters/merged-fp16 \
@@ -203,15 +281,15 @@ print(f"\nTokens used: {response['usage']}")
 #   --max-model-len 1024 \
 #   --gpu-memory-utilization 0.9
 # ```
-#
+# 
 # Then test:
-#
+# 
 # ```bash
 # curl http://localhost:8000/v1/chat/completions \
 #   -H "Content-Type: application/json" \
 #   -d '{"model": "merged-fp16", "messages": [{"role": "user", "content": "Hello"}]}'
 # ```
-#
+# 
 # **Why not in the notebook?** vLLM's process model doesn't play nicely with
 # Jupyter — it expects to own the GPU + a long-running HTTP server. Run it as
 # a sidecar process. The deck mentions vLLM as the deploy target; for actual
@@ -240,9 +318,9 @@ print("Saved data/eval/deploy_meta.json")
 
 # %% [markdown]
 # ## 7. Submission checklist
-#
+# 
 # Bạn vừa hoàn thành core lab. Trước khi submit:
-#
+# 
 # 1. **Run** `make verify` — gatekeeper sẽ list missing artifacts.
 # 2. **Take screenshots** vào `submission/screenshots/` (xem `submission/screenshots/README.md`).
 # 3. **Fill** `submission/REFLECTION.md` — đặc biệt là § 3 (reward curves analysis,
@@ -250,13 +328,14 @@ print("Saved data/eval/deploy_meta.json")
 # 4. **(Optional)** Pick a rigor add-on từ rubric.md (β-sweep, HF push, GGUF
 #    release, W&B link, cross-judge).
 # 5. **(Optional)** Pick a `BONUS-CHALLENGE.md` provocation cho creative bonus.
-#
+# 
 # Push public repo + paste URL vào VinUni LMS Day-22 box.
-#
+# 
 # Câu hỏi cuối để brainstorm trước khi đóng laptop:
-#
+# 
 # > **The deck says:** "DPO + 30 min A100 + 2k UltraFeedback → 3.2 → 4.1 helpfulness."
 # > **You measured:** _<your win-rate from NB4>_.
 # > **Why might they differ?** Dataset (English vs VN), base model (Qwen2.5-3B vs
 # > deck's unspecified base), judge bias, sample size (8 prompts vs deck's full eval).
 # > Đó chính là § 6 trong REFLECTION — what 1 change would close the gap.
+

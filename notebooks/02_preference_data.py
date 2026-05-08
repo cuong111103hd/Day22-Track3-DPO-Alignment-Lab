@@ -6,10 +6,10 @@
 
 # %% [markdown]
 # # NB2 — Preference Data
-#
+# 
 # **Stack:** `argilla/ultrafeedback-binarized-preferences-cleaned` + tokenizer apply_chat_template.
 # Maps to deck §5.1 (preference data formats) + §5.4 (VN landscape — what exists vs not).
-#
+# 
 # > **Mục tiêu:** load preference dataset, format thành `{prompt, chosen, rejected}` với
 # > chat template Qwen2.5, lưu Parquet vào `data/pref/`. Không train gì cả — đây là pure
 # > data prep.
@@ -66,11 +66,11 @@ print(f"Tokenizer: {tokenizer.__class__.__name__}  vocab={tokenizer.vocab_size:,
 
 # %% [markdown]
 # ## 2. Load UltraFeedback (English baseline)
-#
+# 
 # **Why English?** UltraFeedback was the canonical preference dataset of the deck
 # demo (§7.1: "2k UltraFeedback pairs, 30 min A100, 3.2 → 4.1 helpfulness"). Using
 # the same dataset = numbers comparable to deck.
-#
+# 
 # **Why not Vietnamese?** Native VN preference data is a gap (deck §5.4). Translated
 # data (`Sailor2-translated-ultrafeedback-vi`) exists but is NLLB-MT-quality, not native.
 # Bonus B has the full provocation.
@@ -83,7 +83,7 @@ print(f"Loaded {len(ds)} pairs. Columns: {ds.column_names}")
 
 # %% [markdown]
 # ## 3. Format with chat template
-#
+# 
 # DPO Trainer expects `prompt / chosen / rejected` columns. Each must already
 # include the chat template tokens — Trainer doesn't apply template internally.
 
@@ -126,7 +126,7 @@ for i in range(3):
 
 # %% [markdown]
 # ### 3b. Length distribution check
-#
+# 
 # Pairs longer than `MAX_LEN` will be truncated by the trainer. If too many are
 # clipped, DPO loses signal. Aim for ≥ 80% of pairs fitting.
 
@@ -161,18 +161,19 @@ print(f"Saved 50 eval pairs to {PREF_OUT / 'eval.parquet'}")
 
 # %% [markdown]
 # ## 5. Vibe-coding callout
-#
+# 
 # Bạn vừa load 2k cặp English UltraFeedback. Cho VN-aligned model thực sự bạn cần
 # preference data tiếng Việt. Có 3 con đường (deck §5.3 — `BONUS-CHALLENGE.md`
 # provocation #1 nếu muốn full):
-#
+# 
 # 1. **Translate**: chạy NLLB-3.3B trên 2k cặp này. Quality OK, không native.
 # 2. **Generate native**: 200 prompts VN từ VMLU stems → 2 responses (Lab21-SFT vs
 #    stronger model như Gemini Flash) → judge với GPT-4o → train DPO trên đó.
 # 3. **Hybrid**: 1.8k UltraFeedback + 200 native VN. Best-of-both.
-#
+# 
 # Notebook 03 dùng English baseline (option 0) cho fairness với deck demo. Nếu
 # bạn ambitious: thay `data/pref/train.parquet` ở NB3 bằng dataset của bạn — code
 # sau đó không đổi.
-#
+# 
 # **Next:** NB3 — train DPO trainer với reward curves.
+

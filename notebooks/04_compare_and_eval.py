@@ -6,10 +6,10 @@
 
 # %% [markdown]
 # # NB4 — Compare and Eval (SFT-only vs SFT+DPO)
-#
+# 
 # **Stack:** Generation from both adapters + 8 fixed prompts + optional API judge.
 # Maps to deck §7.1 (demo: 3.2 → 4.1 helpfulness on UltraFeedback).
-#
+# 
 # > **Mục tiêu:** show that DPO actually changed model behavior. 8 prompts, 2 models
 # > (SFT-only vs SFT+DPO), side-by-side table. If you have an OpenAI/Anthropic key,
 # > also run automated judge. If not, fall back to manual rubric (no points lost).
@@ -67,9 +67,9 @@ assert torch.cuda.is_available(), "Need GPU for generation"
 from unsloth import FastLanguageModel
 from peft import PeftModel
 import gc
+import torch
 
-
-def generate_with_adapter(adapter_path: Path, prompts: list[dict], max_new_tokens: int = 256):
+def generate_with_adapter(adapter_path: Path, prompts: list, max_new_tokens: int = 256):
     """Load base + adapter, generate for all prompts, free memory, return outputs."""
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=BASE_MODEL,
@@ -80,15 +80,23 @@ def generate_with_adapter(adapter_path: Path, prompts: list[dict], max_new_token
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
+    # Set the ChatML template explicitly for the tokenizer
+    tokenizer.chat_template = "{% for message in messages %}{% if message['role'] == 'user' %}{{ '<|im_start|>user\n' + message['content'] + '<|im_end|>\n' }}{% elif message['role'] == 'system' %}{{ '<|im_start|>system\n' + message['content'] + '<|im_end|>\n' }}{% elif message['role'] == 'assistant' %}{{ '<|im_start|>assistant\n' + message['content'] + '<|im_end|>\n' }}{% endif %}{% endfor %}"
+
     model = PeftModel.from_pretrained(model, str(adapter_path))
     FastLanguageModel.for_inference(model)
 
     outputs = []
     for p in prompts:
         messages = [{"role": "user", "content": p["prompt"]}]
+        # Fix: Pass chat_template explicitly to avoid ValueError in Colab environments
         inputs = tokenizer.apply_chat_template(
-            messages, return_tensors="pt", add_generation_prompt=True
+            messages,
+            return_tensors="pt",
+            add_generation_prompt=True,
+            chat_template=tokenizer.chat_template
         ).to("cuda")
+
         with torch.no_grad():
             out = model.generate(
                 input_ids=inputs,
@@ -105,7 +113,6 @@ def generate_with_adapter(adapter_path: Path, prompts: list[dict], max_new_token
     gc.collect()
     torch.cuda.empty_cache()
     return outputs
-
 
 # %% [markdown]
 # ## 2. Generate from SFT-only
@@ -204,7 +211,7 @@ plt.show()
 
 # %% [markdown]
 # ## 5. Optional: API judge
-#
+# 
 # If `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` is set, run automated judge with the
 # rubric from `VIBE-CODING.md` pattern #5. Otherwise fall back to manual rubric.
 
@@ -279,12 +286,21 @@ def judge_with_anthropic(rows):
         results.append(parsed)
     return results
 
-
 # %%
+import os
+import json
+from google.colab import userdata
+
+# Set the API Key provided by the user "os.environ[\"OPENAI_API_KEY\"] = \"your-api-key-here\"\n"
+
+# Lấy API Key từ Secrets và gán vào môi trường hệ thống
+os.environ["OPENAI_API_KEY"] = userdata.get('OPENAI_API_KEY')
+
 judge_results = None
 
 if os.environ.get("OPENAI_API_KEY"):
     print("Found OPENAI_API_KEY — running gpt-4o-mini judge")
+    # The function judge_with_openai uses EVAL_PROMPTS, sft_outputs, and dpo_outputs from previous cells
     judge_results = judge_with_openai(rows)
 elif os.environ.get("ANTHROPIC_API_KEY"):
     print("Found ANTHROPIC_API_KEY — running claude-haiku judge")
@@ -292,16 +308,21 @@ elif os.environ.get("ANTHROPIC_API_KEY"):
 
 if judge_results is None:
     print("No API keys set. Falling back to manual rubric mode.")
-    print("Fill in your manual judgments below — same JSON shape:")
-    print('  {"id": 1, "winner": "A" | "B" | "tie", "justification": "<...>"}')
     judge_results = [
         {"id": p["id"], "category": p["category"], "winner": "tie", "justification": "MANUAL — fill in"}
         for p in EVAL_PROMPTS
     ]
+else:
+    print(f"Successfully judged {len(judge_results)} prompts using GPT.")
 
+# Save results to disk
 (EVAL_OUT / "judge_results.json").write_text(
     json.dumps(judge_results, ensure_ascii=False, indent=2)
 )
+
+# Display a snippet of the results
+import pandas as pd
+display(pd.DataFrame(judge_results)[['id', 'category', 'winner', 'justification']])
 
 # %% [markdown]
 # ## 6. Win/loss/tie summary
@@ -314,13 +335,11 @@ counter_all = Counter(r["winner"] for r in judge_results)
 counter_help = Counter(r["winner"] for r in judge_results if r["category"] == "helpfulness")
 counter_safe = Counter(r["winner"] for r in judge_results if r["category"] == "safety")
 
-
 def summary(c, label, total):
     a = c.get("A", 0)
     b = c.get("B", 0)
     t = c.get("tie", 0)
     print(f"{label:14s}  SFT-only: {a}/{total}   SFT+DPO: {b}/{total}   tie: {t}/{total}")
-
 
 print("\n" + "=" * 60)
 print(f"WIN/LOSS/TIE SUMMARY ({len(judge_results)} prompts)")
@@ -329,15 +348,21 @@ summary(counter_all, "Overall:", len(judge_results))
 summary(counter_help, "Helpfulness:", 4)
 summary(counter_safe, "Safety:", 4)
 
+# Bonus: Calculate win rate improvement
+dpo_score = counter_all.get('B', 0) + 0.5 * counter_all.get('tie', 0)
+win_rate = (dpo_score / len(judge_results)) * 100
+print(f"\nDPO Win Rate vs SFT: {win_rate:.1f}%")
+
 # %% [markdown]
 # ## 7. Vibe-coding callout
-#
+# 
 # Mạnh nhất khi bạn cross-check với 2 judges (gpt-4o-mini + claude-haiku) — đó là
 # rigor add-on +4 trong rubric. Đặt cả `OPENAI_API_KEY` và `ANTHROPIC_API_KEY`,
 # duplicate cell §5 để chạy cả 2 judges, plot disagreement matrix.
-#
+# 
 # Hỏi cuối: có prompt nào *cả 2 judges* sai không? (Hint: prompt #8 — safety crisis.
 # Cả 2 judges có thể bias nhẹ về "thông cảm hơn" vs "đưa hotline" — bạn pick rubric
 # nào là quyết định alignment, không phải technical.)
-#
+# 
 # **Next:** NB5 — merge + GGUF + serve.
+

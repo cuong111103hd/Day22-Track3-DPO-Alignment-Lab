@@ -6,11 +6,11 @@
 
 # %% [markdown]
 # # NB1 — SFT-mini: Build the Lab 21 SFT checkpoint inline
-#
+# 
 # **Stack:** Unsloth + LoRA r=16 + bitsandbytes 4-bit base + 1k VN Alpaca, 1 epoch.
 # Maps to deck §1 (why SFT alone insufficient — motivates the upcoming DPO step) +
 # deck §3 (DPO will need this SFT checkpoint as initial policy).
-#
+# 
 # > **Mục tiêu:** tạo 1 SFT adapter "đủ tốt" để DPO có gì align lên. Đây là
 # > Lab 21 thu gọn — nếu bạn đã hoàn thành Lab 21 sibling repo
 # > ([VinUni-AI20k/Day21-Track3-Finetuning-LLMs-LoRA-QLoRA](https://github.com/VinUni-AI20k/Day21-Track3-Finetuning-LLMs-LoRA-QLoRA)),
@@ -41,7 +41,7 @@ else:  # BIGGPU
     PER_DEVICE_BATCH = 2
     GRAD_ACCUM = 4
 
-SFT_DATASET = os.environ.get("SFT_DATASET", "5CD-AI/Vietnamese-alpaca-cleaned")
+SFT_DATASET = os.environ.get("SFT_DATASET", "5CD-AI/Vietnamese-alpaca-gpt4-gg-translated")
 SFT_SLICE = 1000
 NUM_EPOCHS = 1
 
@@ -65,7 +65,7 @@ print(f"GPU: {gpu.name}  ({gpu.total_memory / 1e9:.1f} GB)")
 
 # %% [markdown]
 # ## 1. Load base model with Unsloth
-#
+# 
 # Unsloth bundles patched 4-bit kernels — that's how Qwen2.5-3B (or 7B) stays
 # in T4 / A100 budget. The `FastLanguageModel.from_pretrained` call returns a
 # 4-bit quantized base; `get_peft_model` attaches the LoRA adapter on top.
@@ -105,7 +105,7 @@ print(f"Trainable params: {sum(p.numel() for p in model.parameters() if p.requir
 
 # %% [markdown]
 # ## 2. Load + format VN Alpaca slice
-#
+# 
 # `5CD-AI/Vietnamese-alpaca-cleaned` is a 50k-row VN Alpaca translation. Lab 21
 # uses 1k slice for the demo run; we match that exactly so reward gap is comparable.
 
@@ -118,18 +118,21 @@ print(f"\nFirst row:\n{ds[0]}")
 
 # %%
 # Alpaca → ChatML format (Qwen2.5's native template)
+
 def format_alpaca_to_chat(row):
     messages = []
-    if row.get("instruction"):
-        prompt = row["instruction"]
-        if row.get("input"):
-            prompt += "\n\n" + row["input"]
+    if row.get("instruction_vi"):
+        prompt = row["instruction_vi"]
+        if row.get("input_vi"):
+            prompt += "\n\n" + row["input_vi"]
         messages.append({"role": "user", "content": prompt})
-    if row.get("output"):
-        messages.append({"role": "assistant", "content": row["output"]})
+    if row.get("output_vi"):
+        messages.append({"role": "assistant", "content": row["output_vi"]})
     text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
     return {"text": text}
 
+# Set the ChatML template for Qwen2.5
+tokenizer.chat_template = "{% for message in messages %}{% if message['role'] == 'user' %}{{ '<|im_start|>user\n' + message['content'] + '<|im_end|>\n' }}{% elif message['role'] == 'system' %}{{ '<|im_start|>system\n' + message['content'] + '<|im_end|>\n' }}{% elif message['role'] == 'assistant' %}{{ '<|im_start|>assistant\n' + message['content'] + '<|im_end|>\n' }}{% endif %}{% endfor %}"
 
 ds_formatted = ds.map(format_alpaca_to_chat, remove_columns=ds.column_names)
 print(f"\nSample formatted text (first 500 chars):\n{ds_formatted[0]['text'][:500]}")
@@ -215,9 +218,9 @@ print(f"SFT-mini response:\n{generated}")
 
 # %% [markdown]
 # ## 5. Vibe-coding callout
-#
+# 
 # Bạn vừa tái tạo Lab 21 trong ~10 phút. Một câu hỏi để brainstorm:
-#
+# 
 # > **Thật ra, bạn cần *bao nhiêu* SFT để DPO có ý nghĩa?**
 # >
 # > Thử thay `SFT_SLICE = 1000` → `100`. Re-run NB1 → NB3 với SFT yếu hơn.
@@ -226,5 +229,6 @@ print(f"SFT-mini response:\n{generated}")
 # > Đây là 1 design decision *think-hard zone* (xem VIBE-CODING.md): không có
 # > đáp án sẵn trong deck. Hypothesize trước, train sau, viết kết quả vào
 # > `submission/REFLECTION.md` § 6.
-#
+# 
 # **Next:** NB2 — load + format preference data.
+

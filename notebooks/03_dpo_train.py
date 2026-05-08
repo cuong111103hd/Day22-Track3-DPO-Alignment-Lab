@@ -6,10 +6,10 @@
 
 # %% [markdown]
 # # NB3 — DPO Training (the main event)
-#
+# 
 # **Stack:** TRL `DPOTrainer` + `DPOConfig(beta=0.1, lr=5e-7)` from deck §5.2.
 # Maps to deck §3 (DPO derivation), §3.4 (failure modes — read closely!), §5.2 (TRL impl).
-#
+# 
 # > **Mục tiêu:** train DPO adapter on top of NB1 SFT-mini. Plot reward curves
 # > (cả `chosen_rewards` và `rejected_rewards`). Save adapter to `adapters/dpo/`.
 # >
@@ -68,7 +68,7 @@ assert torch.cuda.is_available(), "DPO needs a CUDA GPU. See HARDWARE-GUIDE.md."
 
 # %% [markdown]
 # ## 1. Load policy + reference (the VRAM-doubling part)
-#
+# 
 # **Critical:** DPO needs the policy (trainable) AND a frozen reference (no grad).
 # The reference is the SFT model at step 0; we load it twice. Unsloth's 4-bit base
 # is shared across copies — only the LoRA adapter differs.
@@ -176,12 +176,12 @@ print(f"\nFinal DPO loss: {train_result.training_loss:.4f}")
 
 # %% [markdown]
 # ## 5. Plot reward curves — THE diagnostic
-#
+# 
 # **Read deck §3.4 before interpreting these.** A growing reward gap can come from:
 # - **(intended)** chosen reward going up + rejected staying flat
 # - **(intended)** chosen rising slowly + rejected falling fast
 # - **(likelihood displacement)** chosen reward going *down* + rejected falling faster
-#
+# 
 # The third case is what Razin et al. 2024 documented. It's not a bug, but it
 # tells you the model is finding a way to widen the gap that doesn't necessarily
 # improve actual chosen probability.
@@ -231,7 +231,7 @@ plt.show()
 
 # %% [markdown]
 # ### 5a. Failure-mode self-check
-#
+# 
 # Read this cell carefully — it tells you which kind of "reward gap up" you got.
 
 # %%
@@ -289,25 +289,26 @@ print(f"Wrote metrics to {DPO_OUT / 'dpo_metrics.json'}")
 
 # %% [markdown]
 # ## 7. Vibe-coding callout
-#
+# 
 # Now's the time for the **β experiment** if you want the +6 rigor add-on.
-#
+# 
 # `make beta-sweep` runs this notebook 3 times with `DPO_BETA ∈ {0.05, 0.1, 0.5}`
 # and saves to `adapters/dpo-b{0.05,0.1,0.5}/`. Plot the results yourself:
-#
+# 
 # ```python
 # import json
 # import matplotlib.pyplot as plt
 # from pathlib import Path
-#
+# 
 # results = []
 # for d in sorted((REPO_ROOT / "adapters").glob("dpo-b*")):
 #     m = json.loads((d / "dpo_metrics.json").read_text())
 #     results.append((m["beta"], m["end_reward_gap"]))
 # # plot β vs reward_gap
 # ```
-#
+# 
 # **Think-hard zone:** what's the *expected* shape of the β-vs-reward-gap curve?
 # Hypothesize before you look at the data. (Hint: deck §3.3.)
-#
+# 
 # **Next:** NB4 — qualitative side-by-side comparison.
+
