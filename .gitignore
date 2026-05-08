@@ -19,8 +19,6 @@ data/eval_prompts.json
 adapters/sft-mini/
 adapters/dpo/
 adapters/orpo/
-gguf/
-*.gguf
 runs/
 wandb/
 
